@@ -254,7 +254,7 @@ if st.button("開始搜尋並統整"):
             st.subheader("📌 搜尋到的貼文")
             st.dataframe(df, use_container_width=True)
 
-            csv = df.to_csv(index=False, encoding="utf-8-sig")
+            csv = df.to_csv(index=False).encode("utf-8-sig")
             st.download_button(
                 label="下載 CSV",
                 data=csv,
