@@ -14,7 +14,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 load_dotenv()
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 COOKIE_FILE = "threads_cookies.pkl"
 
 
@@ -43,7 +43,7 @@ def setup_driver(headless=False):
 
 
 # =========================
-# Cookie 登入功能
+# Cookie 登入
 # =========================
 def save_cookies(driver):
     with open(COOKIE_FILE, "wb") as f:
@@ -77,17 +77,15 @@ def login_threads_once():
     driver.get("https://www.threads.net/")
     time.sleep(5)
 
-    print("請在跳出的 Chrome 視窗手動登入 Threads。")
-    print("登入完成後，回到這個終端機按 Enter。")
-
-    input("登入完成後請按 Enter...")
+    print("請在 Chrome 視窗手動登入 Threads")
+    input("登入完成後按 Enter...")
 
     save_cookies(driver)
     driver.quit()
 
 
 # =========================
-# 文字清理
+# 清理文字
 # =========================
 def clean_text(text):
     text = text.strip()
@@ -97,62 +95,40 @@ def clean_text(text):
 
 
 def is_ui_text(text):
-    ui_words = [
-        "登入", "註冊", "Threads", "Instagram", "Meta",
-        "搜尋", "查看更多", "回覆", "轉發", "分享",
-        "隱私", "使用條款", "Cookie", "下載應用程式",
-        "忘記密碼", "建立帳號", "通知", "首頁",
-        "你的個人檔案", "活動", "設定"
-    ]
-
-    if text in ui_words:
+    if len(text) < 6 or len(text) > 1000:
         return True
-
-    if len(text) < 6:
-        return True
-
-    if len(text) > 1000:
-        return True
-
     if text.count("\n") > 18:
         return True
-
     return False
 
 
-def is_duplicate_or_subset(text, seen_texts):
-    for old in seen_texts[:]:
+def is_duplicate_or_subset(text, seen):
+    for old in seen[:]:
         if text == old:
             return True
-
-        if text in old and len(text) < len(old) * 0.8:
+        if text in old:
             return True
-
-        if old in text and len(old) < len(text) * 0.8:
-            seen_texts.remove(old)
-            return False
-
+        if old in text:
+            seen.remove(old)
     return False
 
 
 # =========================
-# Threads 搜尋
+# 搜尋 Threads
 # =========================
 def search_threads_by_keyword(keyword, max_posts=10, scroll_times=15, headless=False):
-    search_url = f"https://www.threads.net/search?q={keyword}"
-
     driver = setup_driver(headless=headless)
 
     has_cookie = load_cookies(driver)
 
-    driver.get(search_url)
+    driver.get(f"https://www.threads.net/search?q={keyword}")
     time.sleep(8)
 
     posts = []
-    seen_texts = []
+    seen = []
 
     try:
-        for i in range(scroll_times):
+        for _ in range(scroll_times):
             elements = driver.find_elements(
                 By.XPATH,
                 "//article | //*[@role='article'] | //div[string-length(normalize-space()) > 15]"
@@ -164,25 +140,21 @@ def search_threads_by_keyword(keyword, max_posts=10, scroll_times=15, headless=F
                 except:
                     continue
 
-                if not text:
-                    continue
-
-                if keyword not in text:
+                if not text or keyword not in text:
                     continue
 
                 if is_ui_text(text):
                     continue
 
-                if is_duplicate_or_subset(text, seen_texts):
+                if is_duplicate_or_subset(text, seen):
                     continue
 
-                seen_texts.append(text)
+                seen.append(text)
 
                 posts.append({
-                    "source": "Threads_Selenium_Login" if has_cookie else "Threads_Selenium_NoLogin",
+                    "source": "Threads_Login" if has_cookie else "Threads_NoLogin",
                     "keyword": keyword,
-                    "text": text,
-                    "url": search_url
+                    "text": text
                 })
 
                 if len(posts) >= max_posts:
@@ -197,185 +169,76 @@ def search_threads_by_keyword(keyword, max_posts=10, scroll_times=15, headless=F
     finally:
         driver.quit()
 
-    return posts[:max_posts]
+    return posts
 
 
 # =========================
-# 規則版 Summary
+# 規則版
 # =========================
 def rule_based_summary(posts):
     texts = [p["text"] for p in posts]
-    joined_text = "\n".join(texts)
-
-    disaster_keywords = {
-        "淹水": ["淹水", "積水", "水位", "抽水"],
-        "停電": ["停電", "斷電", "電力"],
-        "道路中斷": ["道路", "封路", "交通", "無法通行", "坍方"],
-        "救援需求": ["受困", "救援", "物資", "砂包", "撤離"],
-        "土石流": ["土石流", "坍方", "落石"],
-        "颱風": ["颱風", "強風", "豪雨", "暴雨"]
-    }
-
-    detected_types = []
-
-    for disaster_type, keywords in disaster_keywords.items():
-        if any(k in joined_text for k in keywords):
-            detected_types.append(disaster_type)
-
-    if not detected_types:
-        detected_types = ["未明確判斷"]
-
-    needs = []
-
-    if "砂包" in joined_text:
-        needs.append("砂包")
-    if "抽水" in joined_text:
-        needs.append("抽水設備")
-    if "受困" in joined_text or "救援" in joined_text:
-        needs.append("救援人力")
-    if "物資" in joined_text:
-        needs.append("物資支援")
-    if "封路" in joined_text or "無法通行" in joined_text:
-        needs.append("交通管制")
-    if "停電" in joined_text or "斷電" in joined_text:
-        needs.append("電力搶修")
-
-    if not needs:
-        needs = ["尚未明確偵測"]
-
-    confidence = min(1.0, 0.45 + 0.05 * len(posts))
+    text = "\n".join(texts)
 
     return {
-        "災害類型": detected_types,
-        "摘要": f"系統共擷取 {len(posts)} 筆 Threads 相關貼文。內容可能涉及 {', '.join(detected_types)}，建議進一步比對官方資料、新聞或現場回報。",
-        "可能需求": needs,
-        "可信度": round(confidence, 2),
-        "資料來源": list(set([p["source"] for p in posts])),
-        "限制說明": "此結果根據 Threads 公開或登入後可見貼文初步整理，仍需官方資料交叉驗證。"
+        "摘要": f"抓到 {len(posts)} 筆貼文",
+        "關鍵內容": texts[:3]
     }
 
 
 # =========================
-# GPT Summary
+# 🔥 Groq Summary
 # =========================
-def gpt_summary(posts):
-    if not OPENAI_API_KEY:
+def groq_summary(posts):
+    if not GROQ_API_KEY:
         return rule_based_summary(posts)
 
     try:
         from openai import OpenAI
 
-        client = OpenAI(api_key=OPENAI_API_KEY)
-
-        texts = "\n\n".join(
-            [f"{i + 1}. {p['text']}" for i, p in enumerate(posts)]
+        client = OpenAI(
+            api_key=GROQ_API_KEY,
+            base_url="https://api.groq.com/openai/v1"
         )
 
+        texts = "\n\n".join([p["text"] for p in posts])
+
         prompt = f"""
-你是一個防災資訊分析助理。
-請根據以下 Threads 公開貼文，整理成災情情報摘要。
-
-請用 JSON 格式輸出，欄位包含：
-- 災害類型
-- 主要地點
-- 摘要
-- 可能需求
-- 重複事件判斷
-- 可信度分數 0 到 1
-- 判斷依據
-- 限制說明
-
-Threads 貼文如下：
+請整理以下貼文的災情摘要（JSON）：
 {texts}
 """
 
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "你是防災資料融合與災情摘要分析專家。"},
-                {"role": "user", "content": prompt}
-            ],
+        res = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
             temperature=0.2
         )
 
-        return response.choices[0].message.content
+        return res.choices[0].message.content
 
     except Exception as e:
-        return {
-            "錯誤": str(e),
-            "fallback": rule_based_summary(posts)
-        }
+        return {"error": str(e), "fallback": rule_based_summary(posts)}
 
 
 # =========================
-# Streamlit UI
+# UI
 # =========================
-st.set_page_config(page_title="Threads 災情 AI 摘要", layout="wide")
+st.title("🌐 Threads 災情分析系統（Groq版）")
 
-st.title("🌐 Threads 災情貼文搜尋 + AI 統整 MVP")
+if st.button("登入 Threads"):
+    login_threads_once()
+    st.success("登入成功")
 
-st.write("第一次使用請先登入 Threads，之後系統會儲存 cookie，下次搜尋會自動使用登入狀態。")
+keyword = st.text_input("關鍵字", "颱風")
+use_ai = st.checkbox("使用 AI（Groq）", True)
 
-st.divider()
+if st.button("開始"):
+    posts = search_threads_by_keyword(keyword)
 
-if st.button("第一次使用：登入 Threads 並儲存狀態"):
-    with st.spinner("請在跳出的 Chrome 視窗登入 Threads，登入後回到終端機按 Enter。"):
-        login_threads_once()
+    st.write(posts)
 
-    st.success("Threads 登入狀態已儲存，下次搜尋會自動使用登入狀態。")
-
-if os.path.exists(COOKIE_FILE):
-    st.success("目前已偵測到 Threads 登入 cookie。")
-else:
-    st.warning("目前尚未偵測到 Threads 登入 cookie，搜尋結果可能較少。")
-
-st.divider()
-
-keyword = st.text_input("請輸入搜尋關鍵字", value="颱風")
-max_posts = st.number_input("顯示貼文數量", min_value=1, max_value=50, value=10)
-
-headless = st.checkbox("背景執行瀏覽器 headless", value=False)
-use_gpt = st.checkbox("使用 GPT 做摘要，需要 OPENAI_API_KEY", value=False)
-
-if st.button("開始搜尋並統整"):
-    if not keyword.strip():
-        st.error("請輸入關鍵字")
+    if use_ai:
+        result = groq_summary(posts)
     else:
-        with st.spinner("正在搜尋 Threads 貼文..."):
-            posts = search_threads_by_keyword(
-                keyword=keyword.strip(),
-                max_posts=max_posts,
-                scroll_times=15,
-                headless=headless
-            )
+        result = rule_based_summary(posts)
 
-        if not posts:
-            st.warning("沒有抓到貼文。可能原因：Threads 搜尋頁限制、cookie 失效、需要重新登入、公開資料不足，或頁面結構改變。")
-        else:
-            st.success(f"成功取得 {len(posts)} 筆貼文")
-
-            df = pd.DataFrame(posts)
-
-            st.subheader("📌 搜尋到的貼文")
-            st.dataframe(df, use_container_width=True)
-
-            safe_keyword = re.sub(r'[\\/:*?"<>|]', "_", keyword.strip())
-
-            csv = df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-
-            st.download_button(
-                label="下載 CSV",
-                data=csv,
-                file_name=f"threads_{safe_keyword}.csv",
-                mime="text/csv"
-            )
-
-            st.subheader("🧠 AI 統整結果")
-
-            with st.spinner("AI 正在整理摘要..."):
-                if use_gpt:
-                    result = gpt_summary(posts)
-                else:
-                    result = rule_based_summary(posts)
-
-            st.write(result)
+    st.write(result)
