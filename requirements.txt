@@ -4,3 +4,11 @@ requests
 pandas
 python-dotenv
 streamlit
+
+# Selenium 抓 Threads
+selenium
+webdriver-manager
+beautifulsoup4
+
+# （選用）AI summary
+openai
